@@ -33,10 +33,17 @@ func main() {
 	}
 }
 
-type ExpressionData struct {
+type ExpressionDataJSON struct {
 	Exp string `json:"expression"`
 }
 
+type Expression struct {
+	Exp    string
+	Id     string
+	Status string
+}
+
+// Добавление вычисления арифметического выражения
 func addExpressionHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
 		http.Error(w, "method not allowed", 405)
@@ -49,7 +56,7 @@ func addExpressionHandler(w http.ResponseWriter, r *http.Request) {
 		log.Println("ERROR: ", err)
 		return
 	}
-	var data ExpressionData
+	var data ExpressionDataJSON
 	err = json.Unmarshal(body, &data)
 	if err != nil {
 		http.Error(w, "error parsing JSON", 500)
@@ -76,10 +83,28 @@ func addExpressionHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func getExpressionHandler(w http.ResponseWriter, r *http.Request) {}
+// Получение списка выражений со статусами
+func getExpressionHandler(w http.ResponseWriter, r *http.Request) {
+	data, err := storage.GetAll()
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	err = json.NewEncoder(w).Encode(&data)
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		log.Println("ERROR: ", err.Error())
+		return
+	}
+	log.Println("successfully returned all expressions and statuses")
+	return
+}
 
+// Получение значения выражения по его идентификатору
 func getValueHandler(w http.ResponseWriter, r *http.Request) {}
 
+// Получение списка доступных операций со временем их выполения
 func getOperationsHandler(w http.ResponseWriter, r *http.Request) {}
 
+// Получение задачи для выполения
 func getTaskHandler(w http.ResponseWriter, r *http.Request) {}

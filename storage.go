@@ -45,8 +45,38 @@ func (s *Storage) Add(exp, id string) (string, error) {
 	addNewExpressionSQL := `INSERT INTO Expressions (id, expression) VALUES (?, ?)`
 	_, err := s.db.Exec(addNewExpressionSQL, exp, id)
 	if err != nil {
-		log.Println(err)
+		log.Println("ERROR: ", err)
 		return "", err
 	}
 	return id, nil
+}
+
+func (s *Storage) GetAll() ([]Expression, error) {
+	var ans []Expression
+	getAllExpressionsSQL := `SELECT * FROM Expressions`
+	res, err := s.db.Query(getAllExpressionsSQL)
+	if err != nil {
+		log.Println("ERROR: ", err)
+		return nil, err
+	}
+	defer res.Close()
+	for res.Next() {
+		var id string
+		var expression string
+		var status string
+		if err = res.Scan(&id, &expression, &status); err != nil {
+			log.Println("ERROR: ", err)
+			return nil, err
+		}
+		ans = append(ans, Expression{
+			Exp:    expression,
+			Id:     id,
+			Status: status,
+		})
+	}
+	if err := res.Err(); err != nil {
+		log.Println("ERROR: ", err)
+		return nil, err
+	}
+	return ans, nil
 }
