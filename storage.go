@@ -7,8 +7,10 @@ import (
 	"log"
 )
 
-type Database interface {
+type DatabaseHost interface {
 	Add(s1, s2 string) (string, error)
+	GetAll() ([]Expression, error)
+	GetById(id string) (Expression, bool)
 }
 
 type Storage struct {
@@ -17,13 +19,14 @@ type Storage struct {
 
 var newDbInit = `
 CREATE TABLE IF NOT EXISTS Expressions (
-	id VARCHAR(256) PRIMARY KEY,
+	id VARCHAR(256) PRIMARY KEY UNIQUE,
 	expression VARCHAR(256),
-	status VARCHAR(256) DEFAULT 'inactive'
+	status VARCHAR(256) DEFAULT 'inactive',
+    result INT(32) DEFAULT 0
 );
 
-CREATE TABLE IF NOT EXISTS Agents (
-	id VARCHAR(256) PRIMARY KEY,
+CREATE TABLE IF NOT EXISTS Daemons (
+	id VARCHAR(256) PRIMARY KEY UNIQUE,
 	status VARCHAR(256)
 );
 `
@@ -41,9 +44,9 @@ func NewStorage(path string) (*Storage, error) {
 	return &Storage{db: db}, nil
 }
 
-func (s *Storage) Add(exp, id string) (string, error) {
+func (s *Storage) Add(id, exp string) (string, error) {
 	addNewExpressionSQL := `INSERT INTO Expressions (id, expression) VALUES (?, ?)`
-	_, err := s.db.Exec(addNewExpressionSQL, exp, id)
+	_, err := s.db.Exec(addNewExpressionSQL, id, exp)
 	if err != nil {
 		log.Println("ERROR: ", err)
 		return "", err
@@ -64,14 +67,16 @@ func (s *Storage) GetAll() ([]Expression, error) {
 		var id string
 		var expression string
 		var status string
-		if err = res.Scan(&id, &expression, &status); err != nil {
+		var result int32
+		if err = res.Scan(&id, &expression, &status, &result); err != nil {
 			log.Println("ERROR: ", err)
 			return nil, err
 		}
 		ans = append(ans, Expression{
-			Exp:    expression,
 			Id:     id,
+			Exp:    expression,
 			Status: status,
+			Result: result,
 		})
 	}
 	if err := res.Err(); err != nil {
@@ -79,4 +84,35 @@ func (s *Storage) GetAll() ([]Expression, error) {
 		return nil, err
 	}
 	return ans, nil
+}
+
+func (s *Storage) GetById(id string) (Expression, bool) {
+	getDataById := `SELECT id, expression, status, result FROM Expressions WHERE id=?`
+	q, err := s.db.Prepare(getDataById)
+	if err != nil {
+		log.Println("ERROR: ", err.Error())
+		return Expression{}, false
+	}
+	defer q.Close()
+	var exp Expression
+	err = q.QueryRow(id).Scan(&exp.Id, &exp.Exp, &exp.Status, &exp.Result)
+	if err != nil {
+		log.Println("ERROR: ", err.Error())
+		return Expression{}, false
+	}
+	return exp, true
+}
+
+func (s *Storage) UpdateDaemon(id, newStatus string) error {
+	updateDaemonSQL := `UPDATE Daemons SET status=? WHERE id=?`
+	q, err := s.db.Prepare(updateDaemonSQL)
+	if err != nil {
+		return err
+	}
+	defer q.Close()
+	_, err = q.Exec(newStatus, id)
+	if err != nil {
+		return err
+	}
+	return nil
 }

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"github.com/gorilla/mux"
@@ -8,9 +9,12 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
+	"time"
 )
 
 var storage *Storage
+var daemonResponses map[string]time.Time
+var daemons map[string]Daemon
 
 func main() {
 	var err error
@@ -24,11 +28,11 @@ func main() {
 	r := mux.NewRouter()
 	r.HandleFunc("/add-expression", addExpressionHandler).Methods("POST")
 	r.HandleFunc("/get-expressions", getExpressionHandler).Methods("GET")
-	r.HandleFunc("/get-value", getValueHandler).Methods("POST")
-	r.HandleFunc("/get-operations", getOperationsHandler).Methods("GET")
-	r.HandleFunc("/get-task", getTaskHandler).Methods("GET")
+	r.HandleFunc("/get-value", getValueHandler).Methods("GET")
+	go HeartbeatMonitoring(time.Second * 20)
 	err = http.ListenAndServe(":8080", r)
 	if err != nil {
+		log.Fatal("failed to launch server")
 		return
 	}
 }
@@ -37,10 +41,23 @@ type ExpressionDataJSON struct {
 	Exp string `json:"expression"`
 }
 
+type IdReceiveJSON struct {
+	Id string `json:"id"`
+}
+
 type Expression struct {
 	Exp    string
 	Id     string
 	Status string
+	Result int32
+}
+
+func stringToHash(str string) string {
+	hasher := sha256.New()
+	hasher.Write([]byte(str))
+	hashedString := fmt.Sprintf("%x", hasher.Sum(nil))
+
+	return hashedString
 }
 
 // Добавление вычисления арифметического выражения
@@ -63,11 +80,16 @@ func addExpressionHandler(w http.ResponseWriter, r *http.Request) {
 		log.Println("ERROR: ", err)
 		return
 	}
-	id := data.Exp // TODO: make a normal ids for expressions, not the expression themselves
+	id := stringToHash(data.Exp)
 	// TODO: valid checking
 	if isValid := true; isValid {
-		// TODO: id already exists checking
-		id, err := storage.Add(data.Exp, id)
+		_, ok := storage.GetById(id)
+		if ok {
+			_ = json.NewEncoder(w).Encode("expression already exists (" + id + ")")
+			log.Println("expression already exists: ", id)
+			return
+		}
+		id, err := storage.Add(id, data.Exp)
 		if err != nil {
 			http.Error(w, "something went wrong while adding the expression", 500)
 			log.Println("ERROR: something went wrong while adding the expression")
@@ -81,10 +103,16 @@ func addExpressionHandler(w http.ResponseWriter, r *http.Request) {
 		log.Println("ERROR: invalid expression")
 		return
 	}
+	// TODO: put expression in rabbitMQ queue
 }
 
 // Получение списка выражений со статусами
 func getExpressionHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" {
+		http.Error(w, "method not allowed", 405)
+		log.Println("ERROR: method not allowed")
+		return
+	}
 	data, err := storage.GetAll()
 	if err != nil {
 		http.Error(w, err.Error(), 500)
@@ -101,10 +129,60 @@ func getExpressionHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // Получение значения выражения по его идентификатору
-func getValueHandler(w http.ResponseWriter, r *http.Request) {}
+func getValueHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" {
+		http.Error(w, "method not allowed", 405)
+		log.Println("ERROR: method not allowed")
+		return
+	}
+	body, err := ioutil.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "cant read body", 400)
+		log.Println("ERROR: ", err)
+		return
+	}
+	var data IdReceiveJSON
+	err = json.Unmarshal(body, &data)
+	if err != nil {
+		http.Error(w, "error parsing JSON", 500)
+		log.Println("ERROR: ", err)
+		return
+	}
+	exp, ok := storage.GetById(data.Id)
+	if !ok {
+		http.Error(w, "such expression doesnt exist", 400)
+		log.Println("such expression doesnt exist: ", data.Id)
+		return
+	}
+	if exp.Status == "done" {
+		err = json.NewEncoder(w).Encode(exp.Result)
+		log.Println("successfully returned result of: " + data.Id)
+		return
+	} else {
+		http.Error(w, "the expression isn't calculated yet", 400)
+		log.Println("the expression isn't calculated yet: ", data.Id)
+		return
+	}
+}
 
-// Получение списка доступных операций со временем их выполения
-func getOperationsHandler(w http.ResponseWriter, r *http.Request) {}
-
-// Получение задачи для выполения
-func getTaskHandler(w http.ResponseWriter, r *http.Request) {}
+func HeartbeatMonitoring(d time.Duration) {
+	ticker := time.NewTicker(d)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			cur := time.Now()
+			for daemonId, lastBeat := range daemonResponses {
+				if cur.Sub(lastBeat) > d {
+					log.Println("daemon dead:", daemonId)
+					err := storage.UpdateDaemon(daemonId, "dead")
+					if err != nil {
+						log.Println("cant update daemon: ", daemonId)
+					} else {
+						log.Println("daemon updated successfully")
+					}
+				}
+			}
+		}
+	}
+}
