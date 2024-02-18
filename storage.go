@@ -22,7 +22,7 @@ CREATE TABLE IF NOT EXISTS Expressions (
 	id VARCHAR(256) PRIMARY KEY UNIQUE,
 	expression VARCHAR(256),
 	status VARCHAR(256) DEFAULT 'inactive',
-    result INT(32) DEFAULT 0
+    result FLOAT(32) DEFAULT 0.0
 );
 
 CREATE TABLE IF NOT EXISTS Daemons (
@@ -67,7 +67,7 @@ func (s *Storage) GetAll() ([]Expression, error) {
 		var id string
 		var expression string
 		var status string
-		var result int32
+		var result float32
 		if err = res.Scan(&id, &expression, &status, &result); err != nil {
 			log.Println("ERROR: ", err)
 			return nil, err
@@ -103,6 +103,16 @@ func (s *Storage) GetById(id string) (Expression, bool) {
 	return exp, true
 }
 
+func (s *Storage) AddNewDaemon(id string) error {
+	addNewDaemonSQL := `INSERT INTO Daemons (id, status) VALUES (?, 'inactive')`
+	_, err := s.db.Exec(addNewDaemonSQL, id)
+	if err != nil {
+		return err
+	}
+	return nil
+
+}
+
 func (s *Storage) UpdateDaemon(id, newStatus string) error {
 	updateDaemonSQL := `UPDATE Daemons SET status=? WHERE id=?`
 	q, err := s.db.Prepare(updateDaemonSQL)
@@ -111,6 +121,21 @@ func (s *Storage) UpdateDaemon(id, newStatus string) error {
 	}
 	defer q.Close()
 	_, err = q.Exec(newStatus, id)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+// SaveResult Сохранение результата выражения по его ID, изменение статуса выражения
+func (s *Storage) SaveResult(id string, v float32) error {
+	saveResultSQL := `UPDATE Expressions SET result=?, status='done' WHERE id=?`
+	q, err := s.db.Prepare(saveResultSQL)
+	if err != nil {
+		return err
+	}
+	defer q.Close()
+	_, err = q.Exec(v, id)
 	if err != nil {
 		return err
 	}
