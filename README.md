@@ -2,7 +2,7 @@
 Я только бекенд успел сделать. Ну хотя бы апишка работает. Для скачивания проекта воспользуйтесь git clone. Если что-то пойдет не так - гугл в помощь, но на крайняк мой тг - @m6sklv
 <hr><h2>Запуск docker</h2>
 Для того чтобы заработал rabbitMQ надо запустить файлик <strong>docker-compose.yml</strong>
-<br>Пишем в консольку <strong>docker-compose up</strong>
+<br>Пишем в консольку <strong>docker-compose up -d</strong>
 Должна вылезти такая штучка: <img src="doc_images/img.png">
 И дальше много текста. Главное, чтобы в конце было чет вроде
 <strong>Time to start RabbitMQ: 14678385 us</strong> (Цифры могут меняться)
