@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
+	"github.com/j0pl0p/final-task-GO-YL/data"
 	"github.com/j0pl0p/final-task-GO-YL/messages"
+	"github.com/j0pl0p/final-task-GO-YL/structures"
 	_ "github.com/mattn/go-sqlite3"
 	amqp "github.com/rabbitmq/amqp091-go"
 	"io/ioutil"
@@ -15,8 +17,7 @@ import (
 	"time"
 )
 
-var storage *Storage
-var daemonResponses map[string]time.Time
+var storage *data.Storage
 var conn *amqp.Connection
 var ch *amqp.Channel
 var signCalcDurations map[string]time.Duration = map[string]time.Duration{
@@ -28,8 +29,8 @@ var signCalcDurations map[string]time.Duration = map[string]time.Duration{
 
 func main() {
 	var err error
-	storage, err = NewStorage("data/db.db")
-	defer storage.db.Close()
+	storage, err = data.NewStorage("data/db.db")
+	defer storage.Db.Close()
 	if err != nil {
 		log.Fatal(err)
 		return
@@ -50,6 +51,7 @@ func main() {
 	defer ch.Close()
 	log.Println("RMQ started, channel opened")
 
+	// Получение результатов
 	qRes, err := ch.QueueDeclare(
 		"resQueue",
 		false,
@@ -85,7 +87,45 @@ func main() {
 			}
 		}
 	}()
-	log.Printf(" [*] Waiting for messages. To exit press CTRL+C")
+	log.Printf(" [*] RESULTS: Waiting for messages. To exit press CTRL+C")
+
+	// Получение хертбитов
+	qBeat, err := ch.QueueDeclare(
+		"beatQueue",
+		false,
+		false,
+		false,
+		false,
+		nil,
+	)
+	beatsConsumed, err := ch.Consume(
+		qBeat.Name, // queue
+		"",         // consumer
+		true,       // auto-ack
+		false,      // exclusive
+		false,      // no-local
+		false,      // no-wait
+		nil,        // args
+	)
+	if err != nil {
+		log.Fatalf("failed to register a consumer. Error: %s", err)
+	}
+	go func() {
+		for beat := range beatsConsumed {
+			log.Printf("received a beat: %s", beat.Body)
+			msg, err := messages.FromBytes[messages.Beat](beat.Body)
+			if err != nil {
+				log.Println("cant convert bytes to message")
+				continue
+			}
+			err = storage.UpdateDaemonLastResponse(msg.Id)
+			if err != nil {
+				log.Println("cant update last daemon response", err.Error())
+				continue
+			}
+		}
+	}()
+	log.Printf(" [*] RESPONSES: Waiting for messages. To exit press CTRL+C")
 
 	r := mux.NewRouter()
 	r.HandleFunc("/add-expression", addExpressionHandler).Methods("POST")
@@ -93,7 +133,7 @@ func main() {
 	r.HandleFunc("/get-value", getValueHandler).Methods("GET")
 	r.HandleFunc("/set-calc-durations", setCalcDurationsHandler).Methods("POST")
 	r.HandleFunc("/add-new-daemon", makeNewDaemonHandler).Methods("GET")
-	go HeartbeatMonitoring(time.Second * 20)
+	go HeartbeatMonitoring(time.Second * 25)
 	err = http.ListenAndServe(":8080", r)
 	if err != nil {
 		log.Fatal("failed to launch server")
@@ -102,28 +142,7 @@ func main() {
 
 }
 
-type ExpressionDataJSON struct {
-	Exp string `json:"expression"`
-}
-
-type IdReceiveJSON struct {
-	Id string `json:"id"`
-}
-
-type CalcDurationsJSON struct {
-	Plus  int `json:"plus"`
-	Minus int `json:"minus"`
-	Mul   int `json:"mul"`
-	Div   int `json:"div"`
-}
-
-type Expression struct {
-	Exp    string
-	Id     string
-	Status string
-	Result float32
-}
-
+// Хеширование строки str
 func stringToHash(str string) string {
 	hasher := sha256.New()
 	hasher.Write([]byte(str))
@@ -145,7 +164,7 @@ func addExpressionHandler(w http.ResponseWriter, r *http.Request) {
 		log.Println("ERROR: ", err)
 		return
 	}
-	var data ExpressionDataJSON
+	var data structures.ExpressionDataJSON
 	err = json.Unmarshal(body, &data)
 	if err != nil {
 		http.Error(w, "error parsing JSON", 500)
@@ -155,13 +174,13 @@ func addExpressionHandler(w http.ResponseWriter, r *http.Request) {
 	id := stringToHash(data.Exp)
 	// TODO: valid checking
 	if isValid := true; isValid {
-		_, ok := storage.GetById(id)
+		_, ok := storage.GetExpressionById(id)
 		if ok {
 			_ = json.NewEncoder(w).Encode("expression already exists (" + id + ")")
 			log.Println("expression already exists: ", id)
 			return
 		}
-		id, err := storage.Add(id, data.Exp)
+		id, err := storage.AddExpression(id, data.Exp)
 		if err != nil {
 			http.Error(w, "something went wrong while adding the expression", 500)
 			log.Println("ERROR: something went wrong while adding the expression")
@@ -215,7 +234,7 @@ func getExpressionHandler(w http.ResponseWriter, r *http.Request) {
 		log.Println("ERROR: method not allowed")
 		return
 	}
-	data, err := storage.GetAll()
+	data, err := storage.GetAllExpressions()
 	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return
@@ -243,14 +262,14 @@ func getValueHandler(w http.ResponseWriter, r *http.Request) {
 		log.Println("ERROR: ", err)
 		return
 	}
-	var data IdReceiveJSON
+	var data structures.IdReceiveJSON
 	err = json.Unmarshal(body, &data)
 	if err != nil {
 		http.Error(w, "error parsing JSON", 500)
 		log.Println("ERROR: ", err)
 		return
 	}
-	exp, ok := storage.GetById(data.Id)
+	exp, ok := storage.GetExpressionById(data.Id)
 	if !ok {
 		http.Error(w, "such expression doesnt exist", 400)
 		log.Println("such expression doesnt exist: ", data.Id)
@@ -280,7 +299,7 @@ func setCalcDurationsHandler(w http.ResponseWriter, r *http.Request) {
 		log.Println("ERROR: ", err)
 		return
 	}
-	var data CalcDurationsJSON
+	var data structures.CalcDurationsJSON
 	err = json.Unmarshal(body, &data)
 	if err != nil {
 		http.Error(w, "error parsing JSON", 500)
@@ -304,14 +323,22 @@ func HeartbeatMonitoring(d time.Duration) {
 		select {
 		case <-ticker.C:
 			cur := time.Now()
-			for daemonId, lastBeat := range daemonResponses {
+			lps, err := storage.GetDaemonsResponses()
+			if err != nil {
+				log.Println("cant get last daemons responses from storage", err.Error())
+				continue
+			}
+			for daemonId, lastBeat := range lps {
 				if cur.Sub(lastBeat) > d {
-					log.Println("daemon dead:", daemonId)
-					err := storage.UpdateDaemon(daemonId, "dead")
+					log.Println("daemon dead:", daemonId, lastBeat, cur)
+					err := storage.UpdateDaemonStatus(daemonId, "dead")
 					if err != nil {
 						log.Println("cant update daemon: ", daemonId)
-					} else {
-						log.Println("daemon updated successfully")
+					}
+				} else {
+					err := storage.UpdateDaemonStatus(daemonId, "active")
+					if err != nil {
+						log.Println("cant update daemon: ", daemonId)
 					}
 				}
 			}

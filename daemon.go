@@ -12,15 +12,18 @@ import (
 	"time"
 )
 
+// Daemon Структура демона
 type Daemon struct {
 	Id     string
 	Status string
+	Ch     *amqp.Channel
 }
 
+// NewDaemon Создание нового демона
 func NewDaemon() *Daemon {
 	resp, err := http.Get("http://localhost:8080/add-new-daemon")
 	if err != nil {
-		log.Println("cant make a get req")
+		log.Println("cant make a get req", err.Error())
 		return nil
 	}
 	defer resp.Body.Close()
@@ -31,28 +34,70 @@ func NewDaemon() *Daemon {
 	}
 	id := string(responseBody)
 	id = strings.Replace(id, `"`, ``, -1)
+	id = strings.Replace(id, "\n", "", -1)
 	log.Println(id)
 	if err != nil {
 		return nil
 	}
+
+	conn, err := amqp.Dial("amqp://defaultuser:defaultpass@localhost:5672/")
+	ch, err := conn.Channel()
+
 	return &Daemon{
 		Id:     id,
-		Status: "inactive",
+		Status: "active",
+		Ch:     ch,
 	}
 }
 
+// UpdateStatus Обновление статуса демона
 func (d *Daemon) UpdateStatus(newStatus string) {
 	d.Status = newStatus
 }
 
 func main() {
-	NewDaemon()
-	// TODO: ping the orchestrator
-	conn, err := amqp.Dial("amqp://defaultuser:defaultpass@localhost:5672/")
-	defer conn.Close()
-	ch, err := conn.Channel()
+	daemon := NewDaemon()
+	tickingDuration := time.Second * 19
+	qBeat, err := daemon.Ch.QueueDeclare(
+		"beatQueue",
+		false,
+		false,
+		false,
+		false,
+		nil,
+	)
+	if err != nil {
+		log.Fatalf("failed to open a queue. Error: %s", err)
+	}
+	bytes, err := messages.ToBytes[messages.Beat](messages.Beat{Id: daemon.Id})
+	if err != nil {
+		log.Println("cant turn beat into bytes")
+		return
+	}
 
-	q, err := ch.QueueDeclare(
+	ticker := time.NewTicker(tickingDuration)
+	defer ticker.Stop()
+	go func() {
+		for {
+			select {
+			case <-ticker.C:
+				err = daemon.Ch.Publish(
+					"",
+					qBeat.Name,
+					false,
+					false,
+					amqp.Publishing{ContentType: "application/json", Body: bytes},
+				)
+				if err != nil {
+					log.Println("cant send the beat")
+					return
+				}
+				log.Println("successfully sent beat")
+			}
+		}
+	}()
+
+	q, err := daemon.Ch.QueueDeclare(
 		"tasksQueue",
 		false,
 		false,
@@ -61,10 +106,10 @@ func main() {
 		nil,
 	)
 	if err != nil {
-		log.Println("cant declare the queue")
+		log.Println("cant declare the queue", err.Error())
 		return
 	}
-	messagesConsumed, err := ch.Consume(
+	messagesConsumed, err := daemon.Ch.Consume(
 		q.Name, // queue
 		"",     // consumer
 		true,   // auto-ack
@@ -81,7 +126,6 @@ func main() {
 
 	go func() {
 		for message := range messagesConsumed {
-			// TODO: set status to active
 			log.Printf("received a message: %s", message.Body)
 			msg, err := messages.FromBytes[messages.Task](message.Body)
 			if err != nil {
@@ -115,7 +159,7 @@ func main() {
 				Res: resultFloat32Converted,
 			}
 			// TODO: send the result
-			qRes, err := ch.QueueDeclare(
+			qRes, err := daemon.Ch.QueueDeclare(
 				"resQueue",
 				false,
 				false,
@@ -128,7 +172,7 @@ func main() {
 				log.Println("cant turn res into bytes")
 				return
 			}
-			err = ch.Publish(
+			err = daemon.Ch.Publish(
 				"",
 				qRes.Name,
 				false,
@@ -145,5 +189,4 @@ func main() {
 
 	log.Printf(" [*] Waiting for messages. To exit press CTRL+C")
 	<-forever
-
 }
