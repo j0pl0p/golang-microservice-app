@@ -1,37 +1,37 @@
 <h1>Оркестратор GO</h1>
 Я только бекенд успел сделать. Ну хотя бы апишка работает. Для скачивания проекта воспользуйтесь git clone. Если что-то пойдет не так - гугл в помощь, но на крайняк мой тг - @m6sklv
-<hr><h3>Запуск docker</h3>
+<hr><h2>Запуск docker</h2>
 Для того чтобы заработал rabbitMQ надо запустить файлик <strong>docker-compose.yml</strong>
 <br>Пишем в консольку <strong>docker-compose up</strong>
 Должна вылезти такая штучка: <img src="doc_images/img.png">
 И дальше много текста. Главное, чтобы в конце было чет вроде
 <strong>Time to start RabbitMQ: 14678385 us</strong> (Цифры могут меняться)
-<h3>Запуск оркестратора</h3>
+<h2>Запуск оркестратора</h2>
 Откроем новый терминал (все должны находиться в проекте!)
 Пишем: <strong>go run main.go</strong> <br>
 Если все ок, вылезет:
 <img src="doc_images/img_1.png">
 Эт значит что очереди в RMQ открыты
-<h3>Запуск агента/демона</h3>
+<h2>Запуск агента/демона</h2>
 Запускаем ТРЕТИЙ терминал в той же папке и пишем <strong>go run daemon.go</strong> <br>
 Если хотите больше агентов - запустите больше терминалов.
 <img src="doc_images/img_2.png">
 Периодически он будет писать successfully sent beat - эт норм.
 Если все прошло успешно, можно открывать Postman и тестить APIшечку.
-<hr><h3>API</h3>
+<hr><h2>API</h2>
 Для тестирования качаем Postman у кого его нет (можно и другими путями, наверное).
-<h5>POST: http://localhost:8080/add-expression</h5>
+<h4>POST: http://localhost:8080/add-expression</h4>
 Добавление выражения. Указываем без пробелов и не кривое!
 <img src="doc_images/img_4.png">
 На выходе, если все выполнилось правильно, вернется ID выражения, как на картинке
-<h5>GET: http://localhost:8080/get-expressions</h5>
+<h4>GET: http://localhost:8080/get-expressions</h4>
 Тут ничего указывать не надо, вернется JSON со всеми сохраненными выражениями и их данными:
 <img src="doc_images/img_3.png">
-<h5>GET: http://localhost:8080/get-value</h5>
+<h4>GET: http://localhost:8080/get-value</h4>
 Указываем ID выражения, результат которого хотим узнать и получаем результат.
 Если выражение еще не посчитано, об этом будет сообщено.
 <img src="doc_images/img_5.png">
-<h5>POST: http://localhost:8080/set-calc-durations</h5>
+<h4>POST: http://localhost:8080/set-calc-durations</h4>
 Здесь можно указать длительность подсчета каждого действия. Указываем в мс (миллисекундах). По дефолту - 200мс.
 Если все хорошо - вернет статус 200.
 <img src="doc_images/img_6.png">
