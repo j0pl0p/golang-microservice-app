@@ -40,3 +40,4 @@
 <br>Мониторинг воркеров работает в терминале (это heartbeat ес чо).
 <br> Ну и схемка как это работает:
 <img src="doc_images/schema.png">
+<img src="doc_images/img_7.png">
